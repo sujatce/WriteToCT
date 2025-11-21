@@ -1,0 +1,119 @@
+select 
+    [mrm].[GMPI_ID],
+    [mrm].[MEMBER_LAST_NAME],
+    [mrm].[MEMBER_FIRST_NAME],
+    [mrm].[MBR_DATE_OF_BIRTH] as [MEMBER_DATE_OF_BIRTH],
+    [mrm].[MBR_GENDER] as [MEMBER_GENDER],
+    [mrm].[MEMBER_ID],
+    [dm].[MEMBER_MBI],
+    [dm].[MEMBER_LANGUAGE],
+
+    -- <<<<<< ADDED PHONE NUMBER >>>>>>
+    [dma].[MEMBER_PHONE] as [MEMBER_PHONE],
+
+    [dra].[DATE_OF_SERVICE],
+    [hmo].[ELIGIBLE_FLAG] as [ELIGIBILITY_FLAG],
+    [mrm].[RISK_POOL_CODE],
+    [mrm].[SRF_STATUS],
+    [mrm].[PROVIDER_ID],
+    Concat([dp].[PROVIDER_FIRST_NAME], ' ', [dp].[PROVIDER_LAST_NAME]) as [PROVIDER_FULL_NAME],
+    [dp].[NPI_ID],
+    case 
+        when [dc].[CLINIC_RELATION] = 'Affiliated' then 'Affiliated' 
+        when [mrm].[OWNED_FLAG] = 0 then 'Contracted' 
+        when [mrm].[OWNED_FLAG] = 1 then 'Owned'
+        else '' 
+    end as [PROVIDER_RELATION],
+    [mrm].[OWNED_FLAG],
+    [dpa].[CONTACT_PHONE] as [PROVIDER_PHONE],
+    [mrm].[TAX_ID] as [MRM_TAX_ID],
+    [mrm].[CLINIC_ID],
+    [mrm].[CLINIC_NAME],
+    [mrm].[CLINIC_GROUP_ID],
+    [mrm].[CLINIC_GROUP_NAME],
+    [mrm].[REGION_ID],
+    [mrm].[REGION],
+    [mrm].[MARKET_ID],
+    [mrm].[MARKET],
+    case [mrm].[MBR_ELIG_INSURANCE_COMPANY_FULL_NAME] 
+        when 'United Community & State Texas' then 'UnitedHealthcare'
+        when 'United Facets Lite' then 'UnitedHealthcare'
+        when 'United of Florida' then 'UnitedHealthcare'
+        when 'United of Greater Texas' then 'UnitedHealthcare'
+        when 'United of Texas' then 'UnitedHealthcare'
+        when 'Cosmos United Lite' then 'UnitedHealthcare'
+        else [mrm].[MBR_ELIG_INSURANCE_COMPANY_FULL_NAME] 
+    end as [MBR_ELIG_INSURANCE_COMPANY_FULL_NAME],
+    [mrm].[MBR_ELIG_INSURANCE_COMPANY],
+    [mrm].[MBR_ELIG_INSURANCE_COMPANY_ID],
+    [mrm].[CONTRACT_ID],
+    [mrm].[CONTRACT_PBP],
+    [mrm].[BENEFIT_PLAN_DESCRIPTION],
+    [mrm].[DATA_ENTITY],
+    'Wellmed' as [CDO],
+    [mrm].[REPORT_MONTH] as [MRM_REPORT_MONTH]
+
+from [MEMBER_REPORT_MONTH] [mrm]
+
+    -- PROVIDER JOINS
+    left join [DIM_PROVIDER] [dp] 
+        on [mrm].[PROVIDER_ID] = [dp].[PROVIDER_ID]
+
+    left join [DIM_PROVIDER_ADDRESS] [dpa] 
+        on [dp].[PROVIDER_ID] = [dpa].[PROVIDER_ID] 
+        and [dpa].[ACTIVE_FLAG] = 1 
+        and [dpa].[PROVIDER_ADDRESS_PRIMARY_FLAG] = 1 
+
+    left join [DIM_CLINIC] [dc] 
+        on [mrm].[CLINIC_ID] = [dc].[CLINIC_ID] 
+        and [dc].[ACTIVE_FLAG] = 1
+
+    left join [HIER_MEMBER_OPER] [hmo] 
+        on [mrm].[REPORT_MONTH] = [hmo].[HIER_MONTH] 
+        and [mrm].[MEMBER_ID] = [hmo].[MEMBER_ID]
+        and [mrm].[GMPI_ID] = [hmo].[GMPI_ID]
+        and [hmo].[ACTIVE_FLAG] = 1
+
+    left join [DIM_MEMBER] [dm] 
+        on [mrm].[GMPI_ID] = [dm].[GMPI_ID]
+        and [mrm].[MEMBER_ID] = [dm].[MEMBER_ID]
+        and [dm].[ACTIVE_FLAG] = 1
+
+    -- <<<<<<<<<<<<<<<<<<<<<<<<<<<< NEW JOIN FOR PHONE >>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    left join [DIM_MEMBER_ADDRESS] [dma]
+        on [dma].[MEMBER_ID] = [mrm].[MEMBER_ID]
+        and [dma].[ACTIVE_FLAG] = 1
+
+    -- DATE_OF_SERVICE SUBQUERY
+    inner join (
+        select distinct 
+            [GMPI_ID],
+            [PRIMARY_ID],
+            max([RESULT_DATE]) as [DATE_OF_SERVICE]
+        from [dbo].[DEFINITION_RESULT_ACTIVE]
+        where [DEFINITION_CODE] = 'LOVC'
+            and Concat(Month([RESULT_DATE]), Year([RESULT_DATE])) in (
+                Concat(Month(DateAdd(month, -1, '1900-01-01')), Year(DateAdd(month, -1, '1900-01-01'))),
+                Concat(Month(DateAdd(month, -2, '1900-01-01')), Year(DateAdd(month, -2, '1900-01-01'))),
+                Concat(Month(DateAdd(month, -3, '1900-01-01')), Year(DateAdd(month, -3, '1900-01-01')))
+            )
+            and [CLAIM_SPECIALTY_VALUE] in (
+                'PCP','PCP Other',
+                'CLINIC/CENTER - FEDERALLY QUALIFIED HEALTH CENTER (FQHC)',
+                'Clinic/Center - Federally Qualified Health Center (FQHC)',
+                'FEDERALLY QUALIFIED HEALTH CENTERS',
+                'Physician/Family Practice','Physician/Geriatric Medicine',
+                'Physician/Internal Medicine','INTERNAL MEDICINE','FAMILY PRACTICE'
+            )
+        group by [GMPI_ID], [PRIMARY_ID]
+    ) [dra]
+        on [mrm].[PROVIDER_ID] = [dra].[PRIMARY_ID]
+        and [mrm].[GMPI_ID] = [dra].[GMPI_ID]
+
+where [mrm].[MEMBER_LAST_NAME] is not NULL
+    and [mrm].[MEMBER_FIRST_NAME] is not NULL
+    and [mrm].[MBR_DATE_OF_BIRTH] is not NULL
+    and [mrm].[MBR_GENDER] is not NULL
+    and [dm].[MEMBER_MBI] is not NULL
+
+order by [dra].[GMPI_ID];
